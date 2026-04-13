@@ -1,4 +1,4 @@
-from flask import Flask, render_template, jsonify
+from flask import Flask, render_template, jsonify, Response
 import pandas as pd
 import numpy as np
 import os
@@ -24,17 +24,13 @@ def tracks():
     df = cargar_datos()
     individuos = []
     colores = ["red", "blue", "green", "purple", "orange"]
-
     for i, ind in enumerate(df["individual-local-identifier"].unique()):
         df_ind = df[df["individual-local-identifier"] == ind].sort_values("timestamp")
-        df_ind = df_ind.iloc[::10]
-
+        df_sample = df_ind.iloc[::10]
         puntos = [[round(float(r["location-lat"]), 5), round(float(r["location-long"]), 5)]
-                  for _, r in df_ind.iterrows()
+                  for _, r in df_sample.iterrows()
                   if math.isfinite(r["location-lat"]) and math.isfinite(r["location-long"])]
-
-        ultimo = df[df["individual-local-identifier"] == ind].sort_values("timestamp").iloc[-1]
-
+        ultimo = df_ind.iloc[-1]
         individuos.append({
             "id": str(ind),
             "color": colores[i % len(colores)],
@@ -61,6 +57,23 @@ def stats():
             "vel_max": round(float(df_ind["ground-speed"].max()), 2),
         })
     return jsonify(result)
+
+@app.route("/api/speed/<individual_id>")
+def speed(individual_id):
+    df = cargar_datos()
+    df_ind = df[df["individual-local-identifier"] == int(individual_id)].sort_values("timestamp")
+    df_sample = df_ind.iloc[::20]
+    result = [{"t": str(r["timestamp"]), "v": round(float(r["ground-speed"]), 2)}
+              for _, r in df_sample.iterrows()]
+    return jsonify(result)
+
+@app.route("/api/download")
+def download():
+    df = cargar_datos()
+    cols = ["individual-local-identifier", "timestamp", "location-lat", "location-long", "ground-speed"]
+    csv = df[cols].to_csv(index=False)
+    return Response(csv, mimetype="text/csv",
+                    headers={"Content-Disposition": "attachment;filename=telemetry_data.csv"})
 
 if __name__ == "__main__":
     app.run(debug=True, port=5000)

@@ -4,67 +4,149 @@
     <meta charset="UTF-8">
     <title>Wildlife Telemetry Dashboard</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: Arial, sans-serif; background: #0d1117; color: #e6edf3; }
-        header { background: #161b22; padding: 16px 24px; border-bottom: 1px solid #30363d; }
-        header h1 { font-size: 1.4rem; color: #58a6ff; }
-        header p { font-size: 0.85rem; color: #8b949e; margin-top: 2px; }
-        .container { display: grid; grid-template-columns: 1fr 320px; height: calc(100vh - 65px); }
+        header { background: #161b22; padding: 14px 24px; border-bottom: 1px solid #30363d; display: flex; justify-content: space-between; align-items: center; }
+        header h1 { font-size: 1.3rem; color: #58a6ff; }
+        header p { font-size: 0.82rem; color: #8b949e; margin-top: 2px; }
+        .download-btn { background: #238636; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 0.85rem; text-decoration: none; }
+        .download-btn:hover { background: #2ea043; }
+        .container { display: grid; grid-template-columns: 1fr 340px; height: calc(100vh - 65px); }
         #map { width: 100%; height: 100%; }
         .sidebar { background: #161b22; border-left: 1px solid #30363d; overflow-y: auto; padding: 16px; }
-        .sidebar h2 { font-size: 0.95rem; color: #58a6ff; margin-bottom: 12px; }
-        .card { background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 12px; margin-bottom: 10px; }
-        .card h3 { font-size: 0.85rem; color: #e6edf3; margin-bottom: 6px; }
+        .sidebar h2 { font-size: 0.95rem; color: #58a6ff; margin-bottom: 10px; }
+        .card { background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 12px; margin-bottom: 8px; cursor: pointer; transition: border-color 0.2s; }
+        .card:hover { border-color: #58a6ff; }
+        .card.active { border-color: #58a6ff; background: #111827; }
+        .card h3 { font-size: 0.85rem; color: #e6edf3; margin-bottom: 5px; }
         .card p { font-size: 0.78rem; color: #8b949e; margin: 2px 0; }
         .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; }
+        .show-all-btn { width: 100%; background: #21262d; border: 1px solid #30363d; color: #8b949e; padding: 7px; border-radius: 6px; cursor: pointer; font-size: 0.82rem; margin-bottom: 10px; }
+        .show-all-btn:hover { color: #e6edf3; border-color: #58a6ff; }
+        #speed-chart-container { margin-top: 12px; }
+        #speed-chart-container h2 { font-size: 0.95rem; color: #58a6ff; margin-bottom: 8px; }
+        #speed-chart-container p { font-size: 0.78rem; color: #8b949e; }
     </style>
 </head>
 <body>
     <header>
-        <h1>🛰️ Wildlife Telemetry Dashboard</h1>
-        <p>Fregata magnificens — MPIAB PNIC Hurricane Frigate Tracking</p>
+        <div>
+            <h1>🛰️ Wildlife Telemetry Dashboard</h1>
+            <p>Fregata magnificens — MPIAB PNIC Hurricane Frigate Tracking</p>
+        </div>
+        <a class="download-btn" href="/api/download">⬇ Download CSV</a>
     </header>
     <div class="container">
         <div id="map"></div>
         <div class="sidebar">
             <h2>Individuals</h2>
+            <button class="show-all-btn" onclick="showAll()">Show all tracks</button>
             <div id="stats-container"></div>
+            <div id="speed-chart-container">
+                <h2>Speed over time</h2>
+                <p id="chart-hint">Click an individual to see speed chart</p>
+                <canvas id="speedChart" style="display:none"></canvas>
+            </div>
         </div>
     </div>
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script>
         const map = L.map('map').setView([20, -80], 5);
-        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-            attribution: '© CartoDB'
-        }).addTo(map);
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { attribution: '© CartoDB' }).addTo(map);
+
+        const colores = ["red", "blue", "green", "purple", "orange"];
+        let polylines = {};
+        let markers = {};
+        let activeCard = null;
+        let speedChart = null;
 
         fetch('/api/tracks')
             .then(r => r.json())
             .then(data => {
-                data.forEach(ind => {
-                    L.polyline(ind.puntos, {color: ind.color, weight: 1.5, opacity: 0.7}).addTo(map);
-                    L.circleMarker([ind.ultimo.lat, ind.ultimo.lon], {
+                data.forEach((ind, i) => {
+                    const pl = L.polyline(ind.puntos, { color: ind.color, weight: 1.5, opacity: 0.8 }).addTo(map);
+                    const mk = L.circleMarker([ind.ultimo.lat, ind.ultimo.lon], {
                         color: ind.color, radius: 6, fillOpacity: 0.9
                     }).bindPopup(`<b>${ind.id}</b><br>${ind.ultimo.timestamp}<br>Speed: ${ind.ultimo.speed} km/h`).addTo(map);
+                    polylines[ind.id] = pl;
+                    markers[ind.id] = mk;
                 });
             });
 
         fetch('/api/stats')
             .then(r => r.json())
             .then(data => {
-                const colores = ["red", "blue", "green", "purple", "orange"];
                 const container = document.getElementById('stats-container');
                 data.forEach((ind, i) => {
-                    container.innerHTML += `
-                        <div class="card">
-                            <h3><span class="dot" style="background:${colores[i]}"></span>${ind.id}</h3>
-                            <p>Records: ${ind.registros}</p>
-                            <p>Avg speed: ${ind.vel_promedio} km/h</p>
-                            <p>Max speed: ${ind.vel_max} km/h</p>
-                        </div>`;
+                    const card = document.createElement('div');
+                    card.className = 'card';
+                    card.id = `card-${ind.id}`;
+                    card.innerHTML = `
+                        <h3><span class="dot" style="background:${colores[i]}"></span>${ind.id}</h3>
+                        <p>Records: ${ind.registros}</p>
+                        <p>Avg speed: ${ind.vel_promedio} km/h</p>
+                        <p>Max speed: ${ind.vel_max} km/h</p>`;
+                    card.onclick = () => selectIndividual(ind.id, colores[i]);
+                    container.appendChild(card);
                 });
             });
+
+        function selectIndividual(id, color) {
+            // Resaltar trayectoria
+            Object.entries(polylines).forEach(([k, pl]) => {
+                pl.setStyle({ opacity: k === id ? 1 : 0.1, weight: k === id ? 3 : 1 });
+            });
+
+            // Resaltar card
+            if (activeCard) document.getElementById(`card-${activeCard}`)?.classList.remove('active');
+            document.getElementById(`card-${id}`)?.classList.add('active');
+            activeCard = id;
+
+            // Centrar mapa
+            if (markers[id]) map.panTo(markers[id].getLatLng());
+
+            // Cargar gráfica de velocidad
+            fetch(`/api/speed/${id}`)
+                .then(r => r.json())
+                .then(data => {
+                    const labels = data.map(d => d.t.slice(0, 10));
+                    const values = data.map(d => d.v);
+                    document.getElementById('chart-hint').style.display = 'none';
+                    const canvas = document.getElementById('speedChart');
+                    canvas.style.display = 'block';
+                    if (speedChart) speedChart.destroy();
+                    speedChart = new Chart(canvas, {
+                        type: 'line',
+                        data: {
+                            labels,
+                            datasets: [{
+                                label: `Speed (km/h) — ${id}`,
+                                data: values,
+                                borderColor: color,
+                                borderWidth: 1,
+                                pointRadius: 0,
+                                fill: false
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            plugins: { legend: { labels: { color: '#8b949e', font: { size: 10 } } } },
+                            scales: {
+                                x: { ticks: { color: '#8b949e', font: { size: 9 }, maxTicksLimit: 6 }, grid: { color: '#21262d' } },
+                                y: { ticks: { color: '#8b949e', font: { size: 9 } }, grid: { color: '#21262d' } }
+                            }
+                        }
+                    });
+                });
+        }
+
+        function showAll() {
+            Object.values(polylines).forEach(pl => pl.setStyle({ opacity: 0.8, weight: 1.5 }));
+            if (activeCard) document.getElementById(`card-${activeCard}`)?.classList.remove('active');
+            activeCard = null;
+        }
     </script>
 </body>
 </html>
